@@ -1,55 +1,76 @@
 const TelegramApi = require('node-telegram-bot-api')
-
 const {gameOptions, againOptions} = require('./options')
+const sequelize = require('./db');
+const UserModel = require('./models');
 
 const token = '7322377476:AAHXJXKPciFEglKFNP46hSuMEFLR0hh1k6o'
 
 const bot = new TelegramApi(token, {polling: true})
 
 const chats = {}
+
+
 const startGame = async (chatId) => {
-    await bot.sendMessage(chatId, 'сейчас я загодаю цифру, от 1 до 9, а ты должен её отгадать!',)
+    await bot.sendMessage(chatId, `Сейчас я загадаю цифру от 0 до 9, а ты должен ее угадать!`);
     const randomNumber = Math.floor(Math.random() * 10)
-    chats[chatId] = randomNumber
-    await bot.sendMessage(chatId, 'Отгадывай', gameOptions)
+    chats[chatId] = randomNumber;
+    await bot.sendMessage(chatId, 'Отгадывай', gameOptions);
 }
 
-const start = () => {
+const start = async () => {
+
+    try {
+        await sequelize.authenticate()
+        await sequelize.sync()
+    } catch (e) {
+        console.log('Подключение к бд сломалось', e)
+    }
+
     bot.setMyCommands([
-    {command: '/start', description: 'начальное приветсвие'},
-    {command: '/info', description: 'информация о пользователе'},
-    {command: '/game', description: 'интерактивная игра'},
+        {command: '/start', description: 'Начальное приветствие'},
+        {command: '/info', description: 'Получить информацию о пользователе'},
+        {command: '/game', description: 'Игра угадай цифру'},
+    ])
 
-])
+    bot.on('message', async msg => {
+        const text = msg.text;
+        const chatId = msg.chat.id;
 
-bot.on('message',  async msg => {
-    const text = msg.text
-    const chatId = msg.chat.id
+        try {
+            if (text === '/start') {
+                await UserModel.create({chatId})
+                await bot.sendSticker(chatId, 'https://sl.combot.org/popyatkapel/webp/19xf09f9983.webp')
+                return bot.sendMessage(chatId, `Здарова, заебл`);
+            }
+            if (text === '/info') {
+                const user = await UserModel.findOne({chatId})
+                return bot.sendMessage(chatId, `Тебя зовут ${msg.from.first_name} ${msg.from.last_name}, в игре у тебя правильных ответов ${user.right}, неправильных ${user.wrong}`);
+            }
+            if (text === '/game') {
+                return startGame(chatId);
+            }
+            return bot.sendMessage(chatId, 'Я тебя не понимаю, попробуй еще раз!)');
+        } catch (e) {
+            return bot.sendMessage(chatId, 'Произошла какая то ошибочка!)');
+        }
 
-    if (text === '/start' ) {
-        await bot.sendMessage(chatId,  'Добро пожаловать, в моего бота')
-        return  bot.sendSticker(chatId, 'https://data.chpic.su/stickers/n/Nyusya822/Nyusya822_006.webp')
-    }
-    if (text === '/info') {
-       return bot.sendMessage(chatId, `тебя зовут ${msg.from.first_name} ${msg.from.last_name}`)
-    }
-    if (text === '/game') {
-        return startGame(chatId)
-    }
-    return bot.sendMessage(chatId, 'я тебя не понимаю, попробуй ещё раз)')
-})
+    })
+
     bot.on('callback_query', async msg => {
-       const data = msg.data
-       const ChatId = msg.message.chat.id
-        if(data === '/again') {
-            return startGame(ChatId)
+        const data = msg.data;
+        const chatId = msg.message.chat.id;
+        if (data === '/again') {
+            return startGame(chatId)
         }
-        if( data === chats[ChatId]) {
-            return  bot.sendMessage(ChatId, `ты отгадал цифру ${chats[ChatId]}`, againOptions)
+        const user = await UserModel.findOne({chatId})
+        if (data == chats[chatId]) {
+            user.right += 1;
+            await bot.sendMessage(chatId, `Поздравляю, ты отгадал цифру ${chats[chatId]}`, againOptions);
         } else {
-            return bot.sendMessage(ChatId, `Ты не угадал, бот загадал цифру ${chats[ChatId]}`, againOptions)
+            user.wrong += 1;
+            await bot.sendMessage(chatId, `К сожалению ты не угадал, бот загадал цифру ${chats[chatId]}`, againOptions);
         }
-
+        await user.save();
     })
 }
 
